@@ -113,6 +113,26 @@ class Hyperspace:
         """
         self.hyperspace.refreshIndex(indexName)
 
+    def refreshIndex(self, indexName, mode):
+            """
+            Update indexes for the latest version of the data.
+            :param indexName: index name
+
+            >>> hyperspace = Hyperspace(spark)
+            >>> hyperspace.refreshIndex("indexname", "incremental/full")
+            """
+            self.hyperspace.refreshIndex(indexName, mode)
+
+    def optimizeIndex(self, indexName, mode):
+            """
+            Update indexes for the latest version of the data.
+            :param indexName: index name
+
+            >>> hyperspace = Hyperspace(spark)
+            >>> hyperspace.optimizeIndex("indexname", "quick/full")
+            """
+            self.hyperspace.optimizeIndex(indexName, mode)
+
     def cancel(self, indexName):
         """
         Cancel api to bring back index from an inconsistent state to the last known stable state.
