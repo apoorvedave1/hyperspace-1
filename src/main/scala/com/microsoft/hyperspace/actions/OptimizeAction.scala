@@ -21,6 +21,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 
 import com.microsoft.hyperspace.HyperspaceException
+import com.microsoft.hyperspace.actions.Constants.States.{ACTIVE, OPTIMIZING}
 import com.microsoft.hyperspace.index._
 import com.microsoft.hyperspace.index.DataFrameWriterExtensions.Bucketizer
 import com.microsoft.hyperspace.index.IndexConstants.OPTIMIZE_MODES
@@ -46,27 +47,45 @@ import com.microsoft.hyperspace.util.{HyperspaceConf, PathUtils}
  * predefined threshold "spark.hyperspace.index.optimize.fileSizeThreshold" will be picked
  * for compaction.
  *
- * `Full` mode: This allows for slow but complete optimization. ALL files are
- * eligible for compaction. Compaction threshold is inifinity.
+ * `Full` mode: This allows for slow but complete optimization. ALL index files are
+ * picked for compaction.
  *
- * TODO: Optimize can be a no-op if there is only one small file per bucket.
+ * TODO: Optimize can be a no-op if there is at most one optimizable file per bucket.
  *  https://github.com/microsoft/hyperspace/issues/204.
  *
- * @param spark SparkSession
- * @param logManager IndexLogManager for index being refreshed
- * @param dataManager Index DataManager for index being refreshed
+ * @param spark SparkSession.
+ * @param logManager IndexLogManager for index being refreshed.
+ * @param dataManager IndexDataManager for index being refreshed.
  * @param mode Acceptable optimize modes are `quick` and `full`.
  */
 class OptimizeAction(
     spark: SparkSession,
-    logManager: IndexLogManager,
+    final override protected val logManager: IndexLogManager,
     dataManager: IndexDataManager,
     mode: String)
-    extends RefreshActionBase(spark, logManager, dataManager) {
+    extends CreateActionBase(dataManager)
+    with Action {
+  private lazy val previousIndexLogEntry = {
+    logManager.getLog(baseId) match {
+      case Some(e: IndexLogEntry) => e
+      case _ =>
+        throw HyperspaceException("LogEntry must exist for optimize operation")
+    }
+  }
+
+  private lazy val indexConfig: IndexConfig = {
+    val ddColumns = previousIndexLogEntry.derivedDataset.properties.columns
+    IndexConfig(previousIndexLogEntry.name, ddColumns.indexed, ddColumns.included)
+  }
+
+  final override val transientState: String = OPTIMIZING
+
+  final override val finalState: String = ACTIVE
+
   final override def op(): Unit = {
-    // Rewrite index from small files.
+    // Rewrite index using the eligible files to optimize.
     val numBuckets = previousIndexLogEntry.numBuckets
-    val indexDF = spark.read.parquet(smallFiles.map(_.name): _*)
+    val indexDF = spark.read.parquet(filesToOptimize.map(_.name): _*)
 
     val repartitionedDf =
       indexDF.repartition(numBuckets, indexConfig.indexedColumns.map(indexDF(_)): _*)
@@ -85,36 +104,38 @@ class OptimizeAction(
       throw HyperspaceException(s"Unsupported optimize mode '$mode' found.")
     }
 
-    if (smallFiles.isEmpty) {
+    if (filesToOptimize.isEmpty) {
       throw NoChangesException(
-        s"Optimize aborted as no index files smaller than " +
+        "Optimize aborted as no index files smaller than " +
           s"${HyperspaceConf.optimizeFileSizeThreshold(spark)} found.")
     }
   }
 
-  private lazy val (smallFiles, largeFiles): (Seq[FileInfo], Seq[FileInfo]) = {
+  private lazy val (filesToOptimize, filesToIgnore): (Seq[FileInfo], Seq[FileInfo]) = {
     if (mode.equalsIgnoreCase(IndexConstants.OPTIMIZE_MODE_QUICK)) {
       val threshold = HyperspaceConf.optimizeFileSizeThreshold(spark)
       previousIndexLogEntry.content.fileInfos.toSeq.partition(_.size < threshold)
     } else {
+      // For 'full' mode, put all the existing index files into 'filesToOptimize' partition so
+      // that one file is created per bucket.
       (previousIndexLogEntry.content.fileInfos.toSeq, Seq())
     }
   }
 
   override def logEntry: LogEntry = {
-    // Use the `previousLogEntry`. Update content of index files replacing `smallFiles` with newly
-    // created files.
+    // Update `previousIndexLogEntry` to keep `filesToIngore` files and append to it
+    // the list of newly created index files.
     val absolutePath = PathUtils.makeAbsolute(indexDataPath)
     val newContent = Content.fromDirectory(absolutePath)
-    if (largeFiles.nonEmpty) {
-      val largeFilesDirectory: Directory = {
-        val fs = new Path(largeFiles.head.name).getFileSystem(new Configuration)
-        val largeFileStatuses =
-          largeFiles.map(fileInfo => fs.getFileStatus(new Path(fileInfo.name)))
+    if (filesToIgnore.nonEmpty) {
+      val filesToIgnoreDirectory = {
+        val fs = new Path(filesToIgnore.head.name).getFileSystem(new Configuration)
+        val filesToIgnoreStatuses =
+          filesToIgnore.map(fileInfo => fs.getFileStatus(new Path(fileInfo.name)))
 
-        Directory.fromLeafFiles(largeFileStatuses)
+        Directory.fromLeafFiles(filesToIgnoreStatuses)
       }
-      val mergedContent = Content(newContent.root.merge(largeFilesDirectory))
+      val mergedContent = Content(newContent.root.merge(filesToIgnoreDirectory))
       previousIndexLogEntry.copy(content = mergedContent)
     } else {
       previousIndexLogEntry.copy(content = newContent)

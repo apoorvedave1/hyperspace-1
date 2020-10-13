@@ -306,11 +306,9 @@ class IndexManagerTests extends HyperspaceSuite with SQLHelper {
         .parquet(testPath)
       val df = spark.read.parquet(testPath)
       hyperspace.createIndex(df, indexConfig)
-      var indexCount =
-        spark.read
-          .parquet(s"$systemPath/index" +
-            s"/${IndexConstants.INDEX_VERSION_DIRECTORY_PREFIX}=0")
-          .count()
+      val indexCount = spark.read
+        .parquet(s"$systemPath/index/${IndexConstants.INDEX_VERSION_DIRECTORY_PREFIX}=0")
+        .count()
       assert(indexCount == 10)
 
       // Change original data.
@@ -321,14 +319,12 @@ class IndexManagerTests extends HyperspaceSuite with SQLHelper {
         .mode("append")
         .parquet(testPath)
       hyperspace.refreshIndex(indexConfig.indexName, REFRESH_MODE_INCREMENTAL)
-      val newIndexLocation = s"$systemPath/index"
-      indexCount = spark.read
-        .parquet(newIndexLocation +
-          s"/${IndexConstants.INDEX_VERSION_DIRECTORY_PREFIX}=1")
+      val newIndexCount = spark.read
+        .parquet(s"$systemPath/index/${IndexConstants.INDEX_VERSION_DIRECTORY_PREFIX}=1")
         .count()
 
       // Check if index got updated.
-      assert(indexCount == 3)
+      assert(newIndexCount == 3)
 
       hyperspace.optimizeIndex(indexConfig.indexName)
 
