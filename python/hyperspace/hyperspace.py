@@ -103,17 +103,7 @@ class Hyperspace:
         """
         self.hyperspace.vacuumIndex(indexName)
 
-    def refreshIndex(self, indexName):
-        """
-        Update indexes for the latest version of the data.
-        :param indexName: index name
-
-        >>> hyperspace = Hyperspace(spark)
-        >>> hyperspace.refreshIndex("indexname")
-        """
-        self.hyperspace.refreshIndex(indexName)
-
-    def refreshIndex(self, indexName, mode):
+    def refreshIndex(self, indexName, mode='full'):
         """
         Update indexes for the latest version of the data.
         :param indexName: index name
@@ -124,17 +114,7 @@ class Hyperspace:
         """
         self.hyperspace.refreshIndex(indexName, mode)
 
-    def optimizeIndex(self, indexName):
-        """
-        Optimize index by changing the underlying index data layout (e.g., compaction).
-        :param indexName: index name
-
-        >>> hyperspace = Hyperspace(spark)
-        >>> hyperspace.optimizeIndex("indexname")
-        """
-        self.hyperspace.optimizeIndex(indexName)
-
-    def optimizeIndex(self, indexName, mode):
+    def optimizeIndex(self, indexName, mode='quick'):
         """
         Optimize index by changing the underlying index data layout (e.g., compaction).
         :param indexName: index name
