@@ -197,7 +197,7 @@ private[actions] abstract class CreateActionBase(dataManager: IndexDataManager) 
     }
   }
 
-  private def prepareIndexDataFrame(
+  def prepareIndexDataFrame(
       spark: SparkSession,
       df: DataFrame,
       indexConfig: IndexConfig): (DataFrame, Seq[String], Seq[String]) = {

@@ -89,6 +89,10 @@ class Hyperspace(spark: SparkSession) {
     indexManager.refresh(indexName, mode)
   }
 
+  def refreshIndex2(indexName: String, mode: String): Unit = {
+    indexManager.refresh2(indexName, mode)
+  }
+
   /**
    * Optimize index by changing the underlying index data layout (e.g., compaction).
    *

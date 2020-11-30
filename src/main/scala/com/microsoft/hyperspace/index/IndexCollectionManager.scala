@@ -77,6 +77,14 @@ class IndexCollectionManager(
     }
   }
 
+  override def refresh2(indexName: String, mode: String): Unit = {
+    withLogManager(indexName) { logManager =>
+      val indexPath = PathResolver(spark.sessionState.conf).getIndexPath(indexName)
+      val dataManager = indexDataManagerFactory.create(indexPath)
+      new RefreshScan(spark, logManager, dataManager).run()
+    }
+  }
+
   override def optimize(indexName: String, mode: String): Unit = {
     withLogManager(indexName) { logManager =>
       val indexPath = PathResolver(spark.sessionState.conf).getIndexPath(indexName)

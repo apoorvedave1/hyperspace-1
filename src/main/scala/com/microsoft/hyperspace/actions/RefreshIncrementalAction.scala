@@ -50,7 +50,7 @@ class RefreshIncrementalAction(
     dataManager: IndexDataManager)
     extends RefreshActionBase(spark, logManager, dataManager) {
 
-  final override def op(): Unit = {
+  override def op(): Unit = {
     logInfo(
       "Refresh index is updating index by removing index entries " +
         s"corresponding to ${deletedFiles.length} deleted source data files.")
@@ -94,7 +94,7 @@ class RefreshIncrementalAction(
    * Validate index is in active state for refreshing and there are some changes
    * in source data file(s).
    */
-  final override def validate(): Unit = {
+  override def validate(): Unit = {
     super.validate()
 
     if (appendedFiles.isEmpty && deletedFiles.isEmpty) {
