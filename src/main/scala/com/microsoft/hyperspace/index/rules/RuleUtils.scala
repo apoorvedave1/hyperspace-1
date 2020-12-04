@@ -30,7 +30,7 @@ import org.apache.spark.sql.types.{LongType, StructType}
 
 import com.microsoft.hyperspace.index._
 import com.microsoft.hyperspace.index.plans.logical.BucketUnion
-import com.microsoft.hyperspace.util.HyperspaceConf
+import com.microsoft.hyperspace.util.{HyperspaceConf, PathUtils}
 
 object RuleUtils {
 
@@ -124,19 +124,10 @@ object RuleUtils {
                   IndexConstants.UNKNOWN_FILE_ID))
         }
       assert(filesByRelations.length == 1)
-      // index.deletedFiles and index.appendedFiles should be non-empty until Hybrid Scan
-      // handles the lists properly. Otherwise, as the source file list of each index entry
-      // (entry.allSourceFileInfo) also contains the appended and deleted files, we cannot
-      // get the actual appended files and deleted files correctly.
-      indexes.filter(
-        index =>
-          index.created && index.deletedFiles.isEmpty && index.appendedFiles.isEmpty &&
-            isHybridScanCandidate(index, filesByRelations.flatten))
+      indexes.filter(index =>
+        index.created && isHybridScanCandidate(index, filesByRelations.flatten))
     } else {
-      indexes.filter(
-        index =>
-          index.created && index.deletedFiles.isEmpty && index.appendedFiles.isEmpty &&
-            signatureValid(index))
+      indexes.filter(index => index.created && signatureValid(index))
     }
   }
 
@@ -179,10 +170,15 @@ object RuleUtils {
     // If there is no change in source data files, the index can be applied by
     // transformPlanToUseIndexOnlyScan regardless of Hybrid Scan config.
     // This tag should always exist if Hybrid Scan is enabled.
-    lazy val hybridScanRequired =
+    val hybridScanRequired = HyperspaceConf.hybridScanEnabled(spark) &&
       index.getTagValue(getLogicalRelation(plan).get, IndexLogEntryTags.HYBRIDSCAN_REQUIRED).get
 
-    val transformed = if (HyperspaceConf.hybridScanEnabled(spark) && hybridScanRequired) {
+    // If the index has appended files and/or deleted files, which means the current index data
+    // is outdated, Hybrid Scan should be used to handle the newly updated source files.
+    // Added `lazy` to avoid constructing sets for appended/deleted files unless necessary.
+    lazy val isSourceUpdated = index.hasSourceUpdate
+
+    val transformed = if (hybridScanRequired || isSourceUpdated) {
       transformPlanToUseHybridScan(spark, index, plan, useBucketSpec)
     } else {
       transformPlanToUseIndexOnlyScan(spark, index, plan, useBucketSpec)
@@ -279,23 +275,30 @@ object RuleUtils {
             baseOutput,
             _,
             _) =>
-        val curFiles = location.allFiles
-          .map(f => FileInfo(f, index.fileIdTracker.addFile(f), asFullPath = true))
-
         val (filesDeleted, filesAppended) =
-          if (HyperspaceConf.hybridScanDeleteEnabled(spark) && index.hasLineageColumn) {
-            val (exist, nonExist) = curFiles.partition(index.sourceFileInfoSet.contains)
-            val filesAppended = nonExist.map(f => new Path(f.name))
-            if (exist.length < index.sourceFileInfoSet.size) {
-              (index.sourceFileInfoSet -- exist, filesAppended)
-            } else {
-              (Nil, filesAppended)
-            }
+          if (!HyperspaceConf.hybridScanEnabled(spark) && index.hasSourceUpdate) {
+            // If the index contains the source update info, we need to handle
+            // appendedFiles and deletedFiles in IndexLogEntry.
+            (index.deletedFiles, index.appendedFiles.map(f => new Path(f.name)).toSeq)
           } else {
-            // Append-only implementation of getting appended files for efficiency.
-            // It is guaranteed that there is no deleted files via the condition
-            // 'deletedCnt == 0 && commonCnt > 0' in isHybridScanCandidate function.
-            (Nil, curFiles.filterNot(index.sourceFileInfoSet.contains).map(f => new Path(f.name)))
+            val curFiles = location.allFiles
+              .map(f => FileInfo(f, index.fileIdTracker.addFile(f), asFullPath = true))
+            if (HyperspaceConf.hybridScanDeleteEnabled(spark) && index.hasLineageColumn) {
+              val (exist, nonExist) = curFiles.partition(index.sourceFileInfoSet.contains)
+              val filesAppended = nonExist.map(f => new Path(f.name))
+              if (exist.length < index.sourceFileInfoSet.size) {
+                (index.sourceFileInfoSet -- exist, filesAppended)
+              } else {
+                (Nil, filesAppended)
+              }
+            } else {
+              // Append-only implementation of getting appended files for efficiency.
+              // It is guaranteed that there is no deleted files via the condition
+              // 'deletedCnt == 0 && commonCnt > 0' in isHybridScanCandidate function.
+              (
+                Nil,
+                curFiles.filterNot(index.sourceFileInfoSet.contains).map(f => new Path(f.name)))
+            }
           }
 
         val filesToRead = {
@@ -411,7 +414,7 @@ object RuleUtils {
             baseOutput,
             _,
             _) =>
-        val options = extractBasePath(location.partitionSpec)
+        val options = PathUtils.extractBasePath(location.partitionSpec)
           .map { basePath =>
             // Set "basePath" so that partitioned columns are also included in the output schema.
             Map("basePath" -> basePath)
@@ -435,22 +438,6 @@ object RuleUtils {
     }
     assert(!originalPlan.equals(planForAppended))
     planForAppended
-  }
-
-  private def extractBasePath(partitionSpec: PartitionSpec): Option[String] = {
-    if (partitionSpec == PartitionSpec.emptySpec) {
-      None
-    } else {
-      // For example, we could have the following in PartitionSpec:
-      //   - partition columns = "col1", "col2"
-      //   - partitions: "/path/col1=1/col2=1", "/path/col1=1/col2=2", etc.
-      // , and going up the same number of directory levels as the number of partition columns
-      // will compute the base path. Note that PartitionSpec.partitions will always contain
-      // all the partitions in the path, so "partitions.head" is taken as an initial value.
-      val basePath = partitionSpec.partitionColumns
-        .foldLeft(partitionSpec.partitions.head.path)((path, _) => path.getParent)
-      Some(basePath.toString)
-    }
   }
 
   /**

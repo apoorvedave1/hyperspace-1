@@ -21,6 +21,7 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import com.microsoft.hyperspace.index._
 import com.microsoft.hyperspace.index.IndexConstants.{OPTIMIZE_MODE_QUICK, REFRESH_MODE_FULL}
 import com.microsoft.hyperspace.index.plananalysis.PlanAnalyzer
+import com.microsoft.hyperspace.index.sources.FileBasedSourceProviderManager
 
 class Hyperspace(spark: SparkSession) {
   private val indexManager: IndexManager = Hyperspace.getContext(spark).indexCollectionManager
@@ -173,6 +174,14 @@ object Hyperspace {
     context.get()
   }
 
+  private[hyperspace] def getContext: HyperspaceContext = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw HyperspaceException("Could not find active SparkSession.")
+    }
+
+    getContext(sparkSession)
+  }
+
   def apply(): Hyperspace = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw HyperspaceException("Could not find active SparkSession.")
@@ -184,4 +193,6 @@ object Hyperspace {
 
 private[hyperspace] class HyperspaceContext(val spark: SparkSession) {
   val indexCollectionManager = CachingIndexCollectionManager(spark)
+
+  val sourceProviderManager = new FileBasedSourceProviderManager(spark)
 }
