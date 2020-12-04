@@ -61,6 +61,7 @@ class RefreshIncrementalAction(
         .schema(df.schema)
         .format(previousIndexLogEntry.relations.head.fileFormat)
         .options(previousIndexLogEntry.relations.head.options)
+        .option("basePath", "glob2") // This will not be required after the refresh part pr merge
         .load(appendedFiles.map(_.name): _*)
       write(spark, dfWithAppendedFiles, indexConfig)
     }
