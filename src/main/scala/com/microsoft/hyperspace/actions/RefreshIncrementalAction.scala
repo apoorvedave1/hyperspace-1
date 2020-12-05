@@ -50,7 +50,7 @@ class RefreshIncrementalAction(
     dataManager: IndexDataManager)
     extends RefreshActionBase(spark, logManager, dataManager) {
 
-  override def op(): Unit = {
+  final override def op(): Unit = {
     logInfo(
       "Refresh index is updating index by removing index entries " +
         s"corresponding to ${deletedFiles.length} deleted source data files.")
@@ -61,7 +61,6 @@ class RefreshIncrementalAction(
         .schema(df.schema)
         .format(previousIndexLogEntry.relations.head.fileFormat)
         .options(previousIndexLogEntry.relations.head.options)
-        .option("basePath", "glob2") // This will not be required after the refresh part pr merge
         .load(appendedFiles.map(_.name): _*)
       write(spark, dfWithAppendedFiles, indexConfig)
     }
@@ -95,7 +94,7 @@ class RefreshIncrementalAction(
    * Validate index is in active state for refreshing and there are some changes
    * in source data file(s).
    */
-  override def validate(): Unit = {
+  final override def validate(): Unit = {
     super.validate()
 
     if (appendedFiles.isEmpty && deletedFiles.isEmpty) {

@@ -16,72 +16,32 @@ class RefreshScan(
     dataManager: IndexDataManager,
     scanPattern: Option[String] = None)
     extends RefreshIncrementalAction(spark, logManager, dataManager) {
-  /*
   override def logEntry: LogEntry = {
-    val absolutePath = PathUtils.makeAbsolute(indexDataPath)
-    val newContent = Directory.fromDirectory(absolutePath, fileIdTracker)
 
-    val entry = previousIndexLogEntry
-    val mergedIndexContent = Content(newContent.merge(entry.content.root))
-    val relation = entry.relations.head
-    val originalData = relation.data.properties.content.root
-    val newlyAddedData =
-      Directory.fromDirectory(PathUtils.makeAbsolute("glob2/y=2023"), fileIdTracker)
-    val mergedDataContent = Content(originalData.merge(newlyAddedData))
+    // deletedFiles = deleted files which satisfy scan pattern
+    // appendedFiles = appendedFiles which satisfy scan pattern
 
-    // This is required to correctly recalculate the signature.
-    val innerDf = {
-      val relation = previousIndexLogEntry.relations.head
-      val dataSchema = DataType.fromJson(relation.dataSchemaJson).asInstanceOf[StructType]
-      val paths: Seq[String] = mergedDataContent.files.map(_.toString)
-      spark.read
-        .schema(dataSchema)
-        .format(relation.fileFormat)
-        .options(relation.options)
-        .load(paths: _*)
-    }
+    // previously indexed data files
+    // previously created index files
 
-    // Signature
-    val signatureProvider = LogicalPlanSignatureProvider.create()
-    val signature = signatureProvider.signature(innerDf.queryExecution.optimizedPlan) match {
-      case Some(s) =>
-        LogicalPlanFingerprint(
-          LogicalPlanFingerprint.Properties(Seq(Signature(signatureProvider.name, s))))
+    // now: indexed data files = previously indexed data files ++ newly appended files -- deleted files
+    // now: index files = previous index files --
 
-      case None => throw HyperspaceException("Invalid plan for creating an index.")
-    }
-
-    entry.copy(
-      content = mergedIndexContent,
-      source = entry.source.copy(
-        plan = entry.source.plan.copy(
-          properties = entry.source.plan.properties.copy(
-            relations = Seq(relation.copy(
-              data = relation.data.copy(
-                properties = relation.data.properties.copy(mergedDataContent)))),
-            fingerprint = signature))
-          ))
-  }
-   */
-
-  override def logEntry: LogEntry = {
     val relation = previousIndexLogEntry.relations.head
-    val originalData = relation.data.properties.content.root
+    val previouslyIndexedData = relation.data.properties.content.root
     val newlyAddedData =
       Directory.fromDirectory(PathUtils.makeAbsolute("glob2/y=2023"), fileIdTracker)
-    val mergedDataContent = Content(originalData.merge(newlyAddedData))
+    val mergedDataContent = Content(previouslyIndexedData.merge(newlyAddedData))
 
     // This is required to correctly recalculate the signature in generated index log entry.
     val innerDf = {
       val relation = previousIndexLogEntry.relations.head
       val dataSchema = DataType.fromJson(relation.dataSchemaJson).asInstanceOf[StructType]
       val paths: Seq[String] = mergedDataContent.files.map(_.toString)
-      val basePath = "glob2"
       spark.read
         .schema(dataSchema)
         .format(relation.fileFormat)
         .options(relation.options)
-        .option("basePath", basePath)
         .load(paths: _*)
     }
 
@@ -103,19 +63,34 @@ class RefreshScan(
 
   override protected lazy val df = {
     val relation = previousIndexLogEntry.relations.head
-    val pathOption = "glob2/y=2023"
-    val basePath = "glob2"
     val dataSchema = DataType.fromJson(relation.dataSchemaJson).asInstanceOf[StructType]
     spark.read
       .schema(dataSchema)
       .format(relation.fileFormat)
       .options(relation.options)
-      .option("basePath", basePath)
-      .load(pathOption)
+      .load(resolvedPaths: _*)
+  }
+
+  /** paths resolved with scan pattern */
+  private lazy val resolvedPaths = {
+    val relation = previousIndexLogEntry.relations.head
+    relation.rootPaths.filter(p => matchesScanPattern(p))
+    Seq("glob2/y=2023")
+  }
+
+  private def matchesScanPattern(path: String): Boolean = {
+    // TODO: implement matching logic with scanPattern
+    true
   }
 
   override lazy val deletedFiles: Seq[FileInfo] = {
-    // TODO: originalFiles.scanPattern -- current files
+    val relation = previousIndexLogEntry.relations.head
+    val originalFiles =
+     relation.data.properties.content.fileInfos.filter(f => matchesScanPattern(f.name))
+
+    (originalFiles -- currentFiles).toSeq
+
+    // TODO: remove this after scan pattern resolution is done
     Seq()
   }
 }
