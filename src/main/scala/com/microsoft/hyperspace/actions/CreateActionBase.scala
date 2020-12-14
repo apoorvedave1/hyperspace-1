@@ -74,11 +74,8 @@ private[actions] abstract class CreateActionBase(dataManager: IndexDataManager) 
           LogicalPlanFingerprint(
             LogicalPlanFingerprint.Properties(Seq(Signature(signatureProvider.name, s)))))
 
-        val coveringIndexProperties = if (hasLineage(spark)) {
-          Map(IndexConstants.LINEAGE_PROPERTY -> "true")
-        } else {
-          Map[String, String]()
-        }
+        val coveringIndexProperties =
+          (hasLineageProperty(spark) ++ hasParquetAsSourceFormatProperty(spark, df)).toMap
 
         IndexLogEntry(
           indexConfig.indexName,
@@ -94,6 +91,25 @@ private[actions] abstract class CreateActionBase(dataManager: IndexDataManager) 
           Map())
 
       case None => throw HyperspaceException("Invalid plan for creating an index.")
+    }
+  }
+
+  private def hasParquetAsSourceFormatProperty(
+      spark: SparkSession,
+      df: DataFrame): Option[(String, String)] = {
+    val relation = df.queryExecution.optimizedPlan.asInstanceOf[LogicalRelation]
+    if (Hyperspace.getContext(spark).sourceProviderManager.hasParquetAsSourceFormat(relation)) {
+      Some(IndexConstants.HAS_PARQUET_AS_SOURCE_FORMAT_PROPERTY -> "true")
+    } else {
+      None
+    }
+  }
+
+  private def hasLineageProperty(spark: SparkSession): Option[(String, String)] = {
+    if (hasLineage(spark)) {
+      Some(IndexConstants.LINEAGE_PROPERTY -> "true")
+    } else {
+      None
     }
   }
 
@@ -174,11 +190,10 @@ private[actions] abstract class CreateActionBase(dataManager: IndexDataManager) 
       //    + file:/C:/hyperspace/src/test/part-00003.snappy.parquet
       import spark.implicits._
       val dataPathColumn = "_data_path"
-      val lineageDF = fileIdTracker.getFileToIdMap.toSeq
-        .map { kv =>
-          (kv._1._1.replace("file:/", "file:///"), kv._2)
-        }
-        .toDF(dataPathColumn, IndexConstants.DATA_FILE_NAME_ID)
+      val relation = df.queryExecution.optimizedPlan.asInstanceOf[LogicalRelation]
+      val lineagePairs =
+        Hyperspace.getContext(spark).sourceProviderManager.lineagePairs(relation, fileIdTracker)
+      val lineageDF = lineagePairs.toDF(dataPathColumn, IndexConstants.DATA_FILE_NAME_ID)
 
       df.withColumn(dataPathColumn, input_file_name())
         .join(lineageDF.hint("broadcast"), dataPathColumn)
