@@ -67,6 +67,8 @@ trait IndexManager {
    */
   def refresh(indexName: String, mode: String): Unit
 
+  def refresh2(indexName: String, mode: String, scanPattern: String): Unit
+
   /**
    * Optimize index by changing the underlying index data layout (e.g., compaction).
    *
